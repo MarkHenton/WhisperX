@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API de Transcrição WhisperX</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            transition: border-color 0.3s;
+        }
+        .upload-area:hover {
+            border-color: #007bff;
+        }
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #f0f8ff;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .upload-btn {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px;
+        }
+        .upload-btn:hover {
+            background-color: #0056b3;
+        }
+        .upload-btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .result-area {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 5px;
+            display: none;
+        }
+        .result-success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .result-error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .loading {
+            text-align: center;
+            color: #007bff;
+            font-weight: bold;
+        }
+        .transcription-text {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+            border-left: 4px solid #007bff;
+        }
+        .file-info {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #e9ecef;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .health-status {
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .health-ok {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .health-error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 API de Transcrição WhisperX</h1>
+        
+        <div id="healthStatus" class="health-status">
+            Verificando status da API...
+        </div>
+        
+        <div class="upload-area" id="uploadArea">
+            <p>📁 Arraste e solte um arquivo de áudio aqui ou clique para selecionar</p>
+            <p style="font-size: 14px; color: #666;">
+                Formatos suportados: WAV, MP3, MP4, AVI, MOV, FLV, M4A, AAC, OGG, WMA<br>
+                Tamanho máximo: 100MB
+            </p>
+            <input type="file" id="audioFile" accept=".wav,.mp3,.mp4,.avi,.mov,.flv,.m4a,.aac,.ogg,.wma">
+            <button class="upload-btn" onclick="document.getElementById('audioFile').click()">
+                Selecionar Arquivo
+            </button>
+        </div>
+        
+        <div id="fileInfo" class="file-info" style="display: none;"></div>
+        
+        <button id="transcribeBtn" class="upload-btn" onclick="transcribeAudio()" disabled>
+            🎯 Transcrever Áudio
+        </button>
+        
+        <div id="resultArea" class="result-area"></div>
+    </div>
+
+    <script>
+        let selectedFile = null;
+
+        // Verificar status da API
+        async function checkHealth() {
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                const healthStatus = document.getElementById('healthStatus');
+                
+                if (response.ok) {
+                    healthStatus.className = 'health-status health-ok';
+                    healthStatus.textContent = `✅ ${data.message} (${data.device}, ${data.compute_type})`;
+                } else {
+                    throw new Error(data.error || 'Erro desconhecido');
+                }
+            } catch (error) {
+                const healthStatus = document.getElementById('healthStatus');
+                healthStatus.className = 'health-status health-error';
+                healthStatus.textContent = `❌ Erro ao conectar com a API: ${error.message}`;
+            }
+        }
+
+        // Configurar drag and drop
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('audioFile');
+        const transcribeBtn = document.getElementById('transcribeBtn');
+        const fileInfo = document.getElementById('fileInfo');
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFileSelection(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileSelection(e.target.files[0]);
+            }
+        });
+
+        function handleFileSelection(file) {
+            selectedFile = file;
+            
+            // Mostrar informações do arquivo
+            fileInfo.style.display = 'block';
+            fileInfo.innerHTML = `
+                <strong>Arquivo selecionado:</strong> ${file.name}<br>
+                <strong>Tamanho:</strong> ${(file.size / 1024 / 1024).toFixed(2)} MB<br>
+                <strong>Tipo:</strong> ${file.type || 'Desconhecido'}
+            `;
+            
+            // Habilitar botão de transcrição
+            transcribeBtn.disabled = false;
+        }
+
+        async function transcribeAudio() {
+            if (!selectedFile) {
+                alert('Por favor, selecione um arquivo de áudio primeiro.');
+                return;
+            }
+
+            const resultArea = document.getElementById('resultArea');
+            transcribeBtn.disabled = true;
+            transcribeBtn.textContent = '⏳ Transcrevendo...';
+            
+            // Mostrar loading
+            resultArea.style.display = 'block';
+            resultArea.className = 'result-area loading';
+            resultArea.innerHTML = '🔄 Processando áudio... Isso pode levar alguns minutos dependendo do tamanho do arquivo.';
+
+            try {
+                const formData = new FormData();
+                formData.append('audio', selectedFile);
+
+                const response = await fetch('/api/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Sucesso
+                    resultArea.className = 'result-area result-success';
+                    resultArea.innerHTML = `
+                        <h3>✅ Transcrição Concluída</h3>
+                        <p><strong>Idioma detectado:</strong> ${data.language}</p>
+                        <p><strong>Número de segmentos:</strong> ${data.segments.length}</p>
+                        <div class="transcription-text">${data.text}</div>
+                        <details style="margin-top: 15px;">
+                            <summary>Ver segmentos detalhados</summary>
+                            <pre style="background: #f8f9fa; padding: 10px; border-radius: 5px; margin-top: 10px; overflow-x: auto;">${JSON.stringify(data.segments, null, 2)}</pre>
+                        </details>
+                    `;
+                } else {
+                    // Erro
+                    resultArea.className = 'result-area result-error';
+                    resultArea.innerHTML = `
+                        <h3>❌ Erro na Transcrição</h3>
+                        <p>${data.error}</p>
+                    `;
+                }
+            } catch (error) {
+                resultArea.className = 'result-area result-error';
+                resultArea.innerHTML = `
+                    <h3>❌ Erro de Conexão</h3>
+                    <p>Não foi possível conectar com a API: ${error.message}</p>
+                `;
+            } finally {
+                transcribeBtn.disabled = false;
+                transcribeBtn.textContent = '🎯 Transcrever Áudio';
+            }
+        }
+
+        // Verificar status da API ao carregar a página
+        checkHealth();
+    </script>
+</body>
+</html>
+
